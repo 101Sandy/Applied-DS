@@ -1,0 +1,265 @@
+---
+title: "DS Capstone"
+author: "Sandeep"
+date: "2026-06-04"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = FALSE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.width  = 9,
+  fig.height = 5,
+  fig.align  = "center"
+)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(scales)
+```
+
+## Introduction
+
+This milestone report documents the exploratory data analysis.The goal
+is to build a predictive text application, similar to smartphone
+keyboard suggestions, that predicts the next word a user will type.
+
+The three source corpora used are:
+
+Source - Description Blogs - Personal blog entries\
+News - News articles Twitter: Short-form social-media posts
+
+# Loading the Data
+
+```{r load-data}
+blogs_path   <- "C:/Users/User/Downloads/Coursera-SwiftKey/final/en_US/en_US.blogs.txt"
+news_path    <- "C:/Users/User/Downloads/Coursera-SwiftKey/final/en_US/en_US.news.txt"
+twitter_path <- "C:/Users/User/Downloads/Coursera-SwiftKey/final/en_US/en_US.twitter.txt"
+
+blogs   <- readLines(blogs_path, encoding="UTF-8", skipNul=TRUE)
+news    <- readLines(news_path, encoding="UTF-8", skipNul=TRUE)
+twitter <- readLines(twitter_path, encoding="UTF-8", skipNul=TRUE)
+
+cat("Blogs lines:", length(blogs), "\n")
+cat("News lines:", length(news), "\n")
+cat("Twitter lines:", length(twitter), "\n")
+```
+
+# File Summary Statistics
+
+```{r summary-stats}
+file_size_mb <- function(path) {
+  round(file.info(path)$size / 1e6, 1)
+}
+
+count_words <- function(lines) {
+  sum(str_count(lines, "\\S+"))
+}
+
+summary_df <- data.frame(
+  File    = c("Blogs", "News", "Twitter"),
+  Lines   = c(length(blogs), length(news), length(twitter)),
+  Words   = c(count_words(blogs), count_words(news), count_words(twitter)),
+  Size_MB = c(
+    file_size_mb(blogs_path),
+    file_size_mb(news_path),
+    file_size_mb(twitter_path)
+  )
+)
+
+knitr::kable(summary_df,
+             col.names = c("File", "Lines", "Words", "Size (MB)"),
+             caption = "File Summary Table")
+```
+
+## Key Observations
+
+- Twitter has the most number of lines (\~2.36 million), but each entry
+  is very short due to the character limitation, making it more
+  fragmented compared to other datasets.
+
+- Blogs and News contain significantly fewer lines, but each line is
+  much longer and more information-dense.
+
+- Overall, the combined dataset is large, with a total size of nearly
+  583 MB, making it suitable for building a robust text prediction
+  model.
+
+# Exploratory Data Analysis
+
+## Words Per Line Distribution
+
+```{r wpl-dist}
+set.seed(42)
+sample_size <- 5000
+
+# Sample and calculate words per line
+blogs_wpl   <- str_count(sample(blogs,   min(sample_size, length(blogs))),   "\\S+")
+news_wpl    <- str_count(sample(news,    min(sample_size, length(news))),    "\\S+")
+twitter_wpl <- str_count(sample(twitter, min(sample_size, length(twitter))), "\\S+")
+
+# Combine into one data frame
+wpl_df <- data.frame(
+  Source = rep(c("Blogs", "News", "Twitter"),
+               times = c(length(blogs_wpl), length(news_wpl), length(twitter_wpl))),
+  WPL = c(blogs_wpl, news_wpl, twitter_wpl)
+)
+
+# Summary statistics
+avg_wpl <- aggregate(WPL ~ Source, data = wpl_df,
+                     FUN = function(x) c(Mean = mean(x), Median = median(x)))
+
+# Clean output format
+avg_wpl <- data.frame(
+  Source = avg_wpl$Source,
+  Mean   = round(avg_wpl$WPL[, "Mean"], 1),
+  Median = avg_wpl$WPL[, "Median"]
+)
+
+knitr::kable(avg_wpl,
+  caption = "Average & Median Words Per Line",
+  align = c("l", "r", "r")
+)
+```
+
+```{r plot-wpl, fig.cap="Figure 1 - Word-count distribution per line (capped at 150 words)"}
+ggplot(wpl_df %>% filter(WPL <= 150),
+       aes(x = WPL)) +
+  geom_histogram(binwidth = 5, fill = "steelblue", color = "white", alpha = 0.8) +
+  facet_wrap(~ Source) +
+  labs(
+    title = "Distribution of Words Per Line",
+    subtitle = "Sample of 5,000 lines from each corpus (capped at 150 words)",
+    x = "Words per line",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+> **Finding:** Twitter lines are heavily concentrated below 20 words.
+> Blogs and News follow a right-skewed distribution with longer lines
+> common.
+
+# Create sample combined dataset
+```{r top-all}
+sample_all <- data.frame(
+  text = c(
+    sample(blogs, 10000),
+    sample(news, 10000),
+    sample(twitter, 10000)
+  ),
+  Source = rep(c("Blogs", "News", "Twitter"), each = 10000)
+)
+
+library(tidytext)
+library(dplyr)
+
+top_all <- sample_all %>%
+  unnest_tokens(Word, text) %>%
+  count(Source, Word, sort = TRUE) %>%
+  group_by(Source) %>%
+  slice_max(n, n = 20)
+
+```{r eda-plots, fig.height=9, fig.cap="EDA overview: word distribution and frequent words"}
+
+library(gridExtra)
+
+# Histogram: words per line
+p1 <- ggplot(wpl_df %>% filter(WPL <= 120),
+             aes(x = WPL)) +
+  geom_histogram(binwidth = 5, fill = "steelblue", color = "white") +
+  facet_wrap(~ Source) +
+  labs(title = "Words per Line Distribution",
+       x = "Words per line",
+       y = "Count") +
+  theme_minimal()
+
+# Top words (FIXED: Count -> n)
+p2 <- ggplot(top_all,
+             aes(x = reorder(Word, n), y = n)) +
+  geom_col(fill = "darkorange") +
+  coord_flip() +
+  facet_wrap(~ Source) +
+  labs(title = "Top Words",
+       x = NULL,
+       y = "Frequency") +
+  theme_minimal()
+
+grid.arrange(p1, p2, nrow = 2)
+```
+**Key findings:**
+
+- **Twitter sentences are shortest** — tightly clustered below 20 words, a direct result of the 140-character limit.
+- **Blogs are the most verbose** — right-skewed distribution with many lines exceeding 60 words; widest spread of any corpus.
+- **Stop-words dominate everywhere** — "the", "and", "to" top all three corpora; removing them will be essential before n-gram modelling.
+- **"I" is unusually prominent in Twitter** — reflects the first-person, conversational register of social media.
+- **"said" is a News marker** — journalism's reliance on attributed quotations pushes it into the top 20.
+- **News has the richest vocabulary** — most unique words in the sample, owing to varied subject matter and formal register.
+# Future Plan {#future}
+
+## Text Prediction Algorithm
+
+The next word prediction system will follow these steps:
+
+**Step 1 — Data Cleaning**
+
+- Remove non-ASCII characters, URLs, email addresses, and numbers
+- Convert to lowercase
+- Strip punctuation (retain sentence boundaries)
+- Remove profanity (using a blocklist)
+- Sample a representative subset if memory is a constraint
+
+**Step 2 — Tokenisation**
+
+- Split cleaned text into individual tokens (words)
+- Remove stop-words for n-gram construction (optional — kept for prediction)
+
+**Step 3 — N-gram Construction**
+
+- Build **unigram**, **bigram**, and **trigram** frequency tables
+- Store as data frames with frequency counts
+- Apply **Kneser-Ney** or **Stupid Back-off** smoothing to handle unseen n-grams
+
+**Step 4 — Prediction Logic**
+
+- Given a user's last 1–2 typed words, look up matching trigrams
+- Fall back to bigrams, then unigrams if no match found (back-off model)
+- Return the top 3–5 candidate next words with probability scores
+
+## Shiny App Design
+
+```
+
+    Next Word Predictor                     
+
+    Type your text:                            
+   ┌─────────────────────────────────────────┐
+   │  I am going to the ...                  │
+   └─────────────────────────────────────────┘
+                                              
+   Suggested next words:                      
+   [ store ]  [ park ]  [ gym ]  [ beach ]    
+                                              
+   ─────────────────────────────────────────  
+   Top Predictions (with confidence):         
+    1. store   -           42 %               
+    2. park    -           18 %               
+    3. gym     -           12 %               
+
+```
+
+Key Shiny app features:
+
+- **Text input box** — user types freely; prediction updates reactively
+- **Word suggestion buttons** — click to append the predicted word
+- **Confidence bar chart** — visualises prediction probabilities
+- **Source selector** — optional filter: Blogs / News / Twitter / All
+- **Fast response** — pre-computed n-gram tables loaded into memory at startup
+# Conclusion
+
+This report demonstrates successful loading and analysis of the HC Corpora datasets. The data reveals distinct writing styles across sources, particularly Twitter's brevity and Blogs' longer format. A back-off n-gram model and interactive Shiny app are planned to provide efficient next-word prediction.
