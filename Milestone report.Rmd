@@ -1,6 +1,5 @@
 ---
 title: "DS Capstone"
-author: "Sandeep"
 date: "2026-06-04"
 output: html_document
 editor_options: 
